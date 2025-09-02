@@ -5,8 +5,10 @@ import {
   CameraSource,
   Photo,
 } from '@capacitor/camera';
+import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Preferences } from '@capacitor/preferences';
+import { Platform } from '@ionic/angular';
 
 export interface UserPhoto {
   filepath: string;
@@ -19,9 +21,13 @@ export interface UserPhoto {
 export class PhotoService {
   public photos: UserPhoto[] = [];
   private PHOTO_STORAGE: string = 'photos';
+  private platform: Platform;
+
+  constructor(platform: Platform) {
+    this.platform = platform;
+  }
 
   public async addNewToGallery() {
-    // Take a photo
     const capturedPhoto: Photo = await Camera.getPhoto({
       resultType: CameraResultType.Uri,
       source: CameraSource.Camera,
@@ -38,7 +44,10 @@ export class PhotoService {
     });
   }
 
-  private async savePicture(photo: Photo) {
+  private async savePicture(photo: Photo): Promise<{
+    filepath: string;
+    webviewPath: string | undefined;
+  }> {
     const base64Data = await this.readAsBase64(photo);
 
     const fileName = Date.now() + '.jpeg';
@@ -49,6 +58,13 @@ export class PhotoService {
       directory: Directory.Data,
     });
 
+    if (this.platform.is('hybrid')) {
+      return {
+        filepath: savedFile.uri,
+        webviewPath: Capacitor.convertFileSrc(savedFile.uri),
+      };
+    }
+
     return {
       filepath: fileName,
       webviewPath: photo.webPath,
@@ -56,7 +72,14 @@ export class PhotoService {
   }
 
   private async readAsBase64(photo: Photo) {
-    // Fetch the photo, read as a blob, then convert to base64 format
+    if (this.platform.is('hybrid')) {
+      const file = await Filesystem.readFile({
+        path: photo.path!,
+      });
+
+      return file.data;
+    }
+
     const response = await fetch(photo.webPath!);
     const blob = await response.blob();
 
@@ -77,13 +100,15 @@ export class PhotoService {
     const { value } = await Preferences.get({ key: this.PHOTO_STORAGE });
     this.photos = (value ? JSON.parse(value) : []) as UserPhoto[];
 
-    for (let photo of this.photos) {
-      const readFile = await Filesystem.readFile({
-        path: photo.filepath,
-        directory: Directory.Data,
-      });
+    if (!this.platform.is('hybrid')) {
+      for (let photo of this.photos) {
+        const readFile = await Filesystem.readFile({
+          path: photo.filepath,
+          directory: Directory.Data,
+        });
 
-      photo.webviewPath = `data:image/jpeg;base64,${readFile.data}`;
+        photo.webviewPath = `data:image/jpeg;base64,${readFile.data}`;
+      }
     }
   }
 }
